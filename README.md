@@ -119,6 +119,29 @@ PYTHON_VERSION=3.12.4
 - 分别在两个赛道提交 1 条测试题，确认统计互不影响。
 - Render 日志里应看到 `Database backend: Postgres; table: benchmark_questions`。
 
+## 旧表迁移
+
+如果 `cgt_questions` 和 `benchmark_questions` 在同一个 Postgres，可以直接执行：
+
+```bash
+cd backend
+python migrate_legacy_tables.py --source cgt
+```
+
+只看将迁入多少条、不实际写入：
+
+```bash
+cd backend
+python migrate_legacy_tables.py --source cgt --dry-run
+```
+
+同时迁移 `cgt_questions` 和 `protein_questions`：
+
+```bash
+cd backend
+python migrate_legacy_tables.py --source all
+```
+
 ## 生产建议
 
 - 不要把本地 `backend/*.db` 文件提交到仓库。
