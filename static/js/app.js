@@ -44,7 +44,7 @@ const state = {
         target: 1000,
     },
     user: loadUser(),
-    submitForm: defaultQuestionForm(),
+    submitForm: defaultQuestionForm(DEFAULT_META),
     submitErrors: {},
     submitMode: "create",
     editingQuestionId: null,
@@ -233,8 +233,7 @@ async function refreshActiveTab() {
     renderAllTabs();
 }
 
-function defaultQuestionForm() {
-    const meta = arguments[0] || state.meta || DEFAULT_META;
+function defaultQuestionForm(meta = DEFAULT_META) {
     return {
         title: "",
         difficulty: "L2",
@@ -294,7 +293,7 @@ function syncAuthorFields(force = false) {
 }
 
 function resetSubmitForm() {
-    state.submitForm = defaultQuestionForm();
+    state.submitForm = defaultQuestionForm(state.meta);
     syncAuthorFields(true);
     state.submitErrors = {};
     state.submitMode = "create";
