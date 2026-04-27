@@ -1,22 +1,41 @@
-import {
-    DIFFICULTIES,
-    DOMAINS,
-    SOURCE_TYPES,
-    STATUS_META,
-    PRESET_REVISION_REASONS,
-} from "./constants.js";
+import { STATUS_META } from "./constants.js";
 
-const STORAGE_KEY = "cgt-bench-user";
+const DEFAULT_META = {
+    tracks: [
+        { value: "cgt", label: "CGT", emoji: "🧫" },
+        { value: "protein", label: "Protein", emoji: "🧬" },
+    ],
+    current_track: "cgt",
+    site_title: "CGT Agent Benchmark",
+    site_subtitle: "基因与细胞治疗 AI Agent 评测基准 · 题目收集与管理平台",
+    footer_text: "CGT Agent Benchmark · v2.0",
+    difficulties: [
+        { value: "L1", label: "L1 精准事实检索", desc: "" },
+        { value: "L2", label: "L2 生物逻辑推演", desc: "" },
+        { value: "L3", label: "L3 实验方案设计", desc: "" },
+        { value: "L4", label: "L4 转化决策与创新", desc: "" },
+    ],
+    domains: ["递送系统 C1", "基因治疗 C2", "细胞工程 C3"],
+    source_types: ["原创", "文献改编", "教材改编", "数据库条目改编"],
+    revision_reasons: ["题目描述不清晰", "采分点设置违规", "参考答案错误/不完整", "溯源信息缺失", "领域不符", "其他"],
+    placeholders: {
+        title: "提示：rAAV 表达盒的结构设计与元件优选",
+        subdomain: "例如：AAV载体设计 / CAR-T / 体内递送",
+        source_detail: "改编类题目填写 DOI / PMID / 教材章节等",
+    },
+    target_count: 1000,
+};
+
+const STORAGE_KEY = "benchmark-bench-user";
 const DEFAULT_USER = {
     role: "submitter",
     name: "",
+    track: "cgt",
 };
 
 const state = {
     activeTab: "submit",
-    meta: {
-        target_count: 1000,
-    },
+    meta: structuredClone(DEFAULT_META),
     stats: {
         total: 0,
         approved: 0,
@@ -60,6 +79,11 @@ const els = {
     modalCancel: document.getElementById("modal-cancel"),
     currentUserLabel: document.getElementById("current-user-label"),
     roleBadge: document.getElementById("role-badge"),
+    siteIcon: document.getElementById("site-icon"),
+    siteTitle: document.getElementById("site-title"),
+    siteSubtitle: document.getElementById("site-subtitle"),
+    siteFooter: document.getElementById("site-footer"),
+    trackSwitcher: document.getElementById("track-switcher"),
     statTotal: document.getElementById("stat-total"),
     statTarget: document.getElementById("stat-target"),
     statApproved: document.getElementById("stat-approved"),
@@ -80,11 +104,13 @@ async function boot() {
     bindChromeEvents();
     syncRoleModal();
     renderUser();
+    renderTrackChrome();
     renderTabChrome();
     renderAllTabs();
 
     try {
-        await Promise.all([loadMeta(), refreshStats(), refreshActiveTab()]);
+        await loadMeta();
+        await Promise.all([refreshStats(), refreshActiveTab()]);
     } catch (error) {
         toast(error.message || "初始化失败", "error");
     }
@@ -132,6 +158,7 @@ function apiHeaders(extra = {}) {
         "Content-Type": "application/json",
         "X-Role": state.user.role || "submitter",
         "X-User-Name": encodeURIComponent((state.user.name || "").trim()),
+        "X-Track": state.user.track || "cgt",
         ...extra,
     };
 }
@@ -173,6 +200,14 @@ async function api(path, options = {}) {
 async function loadMeta() {
     const meta = await api("/api/meta", { headers: {} });
     state.meta = meta;
+    normalizeFilters();
+    if (state.user.track !== meta.current_track) {
+        state.user.track = meta.current_track;
+        persistUser();
+    }
+    state.submitForm = defaultQuestionForm(meta);
+    syncAuthorFields(true);
+    renderTrackChrome();
     renderAllTabs();
 }
 
@@ -199,10 +234,11 @@ async function refreshActiveTab() {
 }
 
 function defaultQuestionForm() {
+    const meta = arguments[0] || state.meta || DEFAULT_META;
     return {
-        title: "rAAV 表达盒的结构设计与元件优选",
+        title: "",
         difficulty: "L2",
-        domain: DOMAINS[0],
+        domain: meta.domains[0] || "",
         subdomain: "",
         content: "",
         rubric: [
@@ -211,10 +247,44 @@ function defaultQuestionForm() {
             { desc: "", score: 3 },
         ],
         reference_answer: "",
-        source_type: SOURCE_TYPES[0],
+        source_type: meta.source_types[0] || "原创",
         source_detail: "",
         author_name: "",
     };
+}
+
+function difficultyOptions() {
+    return state.meta.difficulties || DEFAULT_META.difficulties;
+}
+
+function domainOptions() {
+    return state.meta.domains || DEFAULT_META.domains;
+}
+
+function sourceTypeOptions() {
+    return state.meta.source_types || DEFAULT_META.source_types;
+}
+
+function revisionReasonOptions() {
+    return state.meta.revision_reasons || DEFAULT_META.revision_reasons;
+}
+
+function activeTrackMeta() {
+    const fallback = DEFAULT_META.tracks.find((item) => item.value === state.user.track) || DEFAULT_META.tracks[0];
+    return (state.meta.tracks || []).find((item) => item.value === state.user.track) || fallback;
+}
+
+function trackPlaceholder(key) {
+    return state.meta.placeholders?.[key] || DEFAULT_META.placeholders[key] || "";
+}
+
+function normalizeFilters() {
+    const domains = new Set(domainOptions());
+    const difficulties = new Set(difficultyOptions().map((item) => item.value));
+    Object.values(state.filters).forEach((filters) => {
+        if (filters.domain && !domains.has(filters.domain)) filters.domain = "";
+        if (filters.difficulty && !difficulties.has(filters.difficulty)) filters.difficulty = "";
+    });
 }
 
 function syncAuthorFields(force = false) {
@@ -236,6 +306,38 @@ function renderUser() {
     els.roleBadge.textContent = roleText;
     const name = state.user.name || "未设置";
     els.currentUserLabel.textContent = name;
+}
+
+function renderTrackChrome() {
+    const activeTrack = activeTrackMeta();
+    els.siteIcon.textContent = activeTrack.emoji || "🧪";
+    els.siteTitle.textContent = state.meta.site_title || "Benchmark Hub";
+    els.siteSubtitle.textContent = state.meta.site_subtitle || "";
+    els.siteFooter.textContent = state.meta.footer_text || "Benchmark Hub";
+    document.title = state.meta.site_title || "Benchmark Hub";
+
+    els.trackSwitcher.innerHTML = (state.meta.tracks || []).map((track) => `
+        <button
+            class="px-3 py-1 rounded-full text-xs font-semibold border transition ${track.value === state.user.track ? "bg-white text-primary border-white" : "bg-white/15 text-white border-white/30 hover:bg-white/25"}"
+            data-track="${track.value}"
+        >
+            ${escapeHtml(track.emoji || "")} ${escapeHtml(track.label)}
+        </button>
+    `).join("");
+
+    els.trackSwitcher.querySelectorAll("[data-track]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+            const nextTrack = btn.dataset.track;
+            if (!nextTrack || nextTrack === state.user.track) return;
+            state.user.track = nextTrack;
+            persistUser();
+            state.submitErrors = {};
+            state.submitMode = "create";
+            state.editingQuestionId = null;
+            await loadMeta();
+            await Promise.all([refreshStats(), refreshActiveTab()]);
+        });
+    });
 }
 
 function syncRoleModal() {
@@ -263,6 +365,7 @@ async function saveRoleModal() {
     state.user = {
         role: state.user.role,
         name,
+        track: state.user.track,
     };
     persistUser();
     renderUser();
@@ -321,10 +424,10 @@ function renderSubmitTab() {
                     <div class="detail-block">
                         <div class="section-title mb-4">题目信息</div>
                         <div class="form-grid two">
-                            ${fieldInput("title", "题目标题", form.title, "提示：rAAV 表达盒的结构设计与元件优选", true)}
-                            ${fieldSelect("difficulty", "难度等级", DIFFICULTIES.map((it) => ({ value: it.value, label: it.label })), form.difficulty, true)}
-                            ${fieldSelect("domain", "领域大类", DOMAINS.map((it) => ({ value: it, label: it })), form.domain, true)}
-                            ${fieldInput("subdomain", "领域小类", form.subdomain, "例如：AAV载体设计 / CAR-T / 体内递送", false)}
+                            ${fieldInput("title", "题目标题", form.title, trackPlaceholder("title"), true)}
+                            ${fieldSelect("difficulty", "难度等级", difficultyOptions().map((it) => ({ value: it.value, label: it.label })), form.difficulty, true)}
+                            ${fieldSelect("domain", "领域大类", domainOptions().map((it) => ({ value: it, label: it })), form.domain, true)}
+                            ${fieldInput("subdomain", "领域小类", form.subdomain, trackPlaceholder("subdomain"), false)}
                         </div>
                         <div class="mt-4">
                             ${fieldTextarea("content", "题目正文", form.content, "完整描述题目、子问题、作答要求、溯源要求", true, 7)}
@@ -353,8 +456,8 @@ function renderSubmitTab() {
                             ${fieldTextarea("reference_answer", "参考答案", form.reference_answer, "建议与采分点逐条对应", false, 6)}
                         </div>
                         <div class="form-grid two mt-4">
-                            ${fieldSelect("source_type", "题目来源", SOURCE_TYPES.map((it) => ({ value: it, label: it })), form.source_type, true)}
-                            ${fieldInput("source_detail", "来源详情", form.source_detail, "改编类题目填写 DOI / PDB / 教材章节等", false)}
+                            ${fieldSelect("source_type", "题目来源", sourceTypeOptions().map((it) => ({ value: it, label: it })), form.source_type, true)}
+                            ${fieldInput("source_detail", "来源详情", form.source_detail, trackPlaceholder("source_detail"), false)}
                         </div>
                     </div>
 
@@ -425,8 +528,8 @@ function renderSubmittedTab() {
                     { value: "needs_revision", label: "仅需修改" },
                     { value: "", label: "全部" },
                 ], filters.status)}
-                ${filterSelect("submitted-difficulty", "难度", [{ value: "", label: "全部" }, ...DIFFICULTIES.map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
-                ${filterSelect("submitted-domain", "领域", [{ value: "", label: "全部" }, ...DOMAINS.map((it) => ({ value: it, label: it }))], filters.domain)}
+                ${filterSelect("submitted-difficulty", "难度", [{ value: "", label: "全部" }, ...difficultyOptions().map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
+                ${filterSelect("submitted-domain", "领域", [{ value: "", label: "全部" }, ...domainOptions().map((it) => ({ value: it, label: it }))], filters.domain)}
                 ${filterInput("submitted-q", "关键词", filters.q, "标题 / 正文 / 作者")}
             </div>
             ${renderQuestionList(state.submittedItems, {
@@ -471,8 +574,8 @@ function renderReviewedTab() {
             </div>
             <div class="filter-bar">
                 ${filterSelect("reviewed-status", "状态", statusOptions, filters.status)}
-                ${filterSelect("reviewed-difficulty", "难度", [{ value: "", label: "全部" }, ...DIFFICULTIES.map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
-                ${filterSelect("reviewed-domain", "领域", [{ value: "", label: "全部" }, ...DOMAINS.map((it) => ({ value: it, label: it }))], filters.domain)}
+                ${filterSelect("reviewed-difficulty", "难度", [{ value: "", label: "全部" }, ...difficultyOptions().map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
+                ${filterSelect("reviewed-domain", "领域", [{ value: "", label: "全部" }, ...domainOptions().map((it) => ({ value: it, label: it }))], filters.domain)}
                 ${filterInput("reviewed-q", "关键词", filters.q, "标题 / 正文 / 作者")}
             </div>
             ${renderQuestionList(state.reviewedItems, {
@@ -515,8 +618,8 @@ function renderBankTab() {
                 </div>
             </div>
             <div class="filter-bar">
-                ${filterSelect("bank-difficulty", "难度", [{ value: "", label: "全部" }, ...DIFFICULTIES.map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
-                ${filterSelect("bank-domain", "领域", [{ value: "", label: "全部" }, ...DOMAINS.map((it) => ({ value: it, label: it }))], filters.domain)}
+                ${filterSelect("bank-difficulty", "难度", [{ value: "", label: "全部" }, ...difficultyOptions().map((it) => ({ value: it.value, label: it.value }))], filters.difficulty)}
+                ${filterSelect("bank-domain", "领域", [{ value: "", label: "全部" }, ...domainOptions().map((it) => ({ value: it, label: it }))], filters.domain)}
                 ${filterInput("bank-q", "关键词", filters.q, "标题 / 正文 / 出题人")}
             </div>
             ${renderQuestionList(state.bankItems, {
@@ -687,12 +790,12 @@ async function startEditing(id) {
     state.submitForm = {
         title: item.title || "",
         difficulty: item.difficulty || "L2",
-        domain: item.domain || DOMAINS[0],
+        domain: item.domain || domainOptions()[0] || "",
         subdomain: item.subdomain || "",
         content: item.content || "",
         rubric: (item.rubric || []).map((it) => ({ desc: it.desc || "", score: Number(it.score) || 0 })),
         reference_answer: item.reference_answer || "",
-        source_type: item.source_type || SOURCE_TYPES[0],
+        source_type: item.source_type || sourceTypeOptions()[0] || "原创",
         source_detail: item.source_detail || "",
         author_name: state.user.name || item.author_name || "",
     };
@@ -865,7 +968,7 @@ async function openReviewDrawer(id) {
                     <div class="detail-block">
                         <div class="form-label">预设修改原因</div>
                         <div class="check-grid">
-                            ${PRESET_REVISION_REASONS.map((reason) => `
+                            ${revisionReasonOptions().map((reason) => `
                                 <label class="check-item">
                                     <input type="checkbox" data-reason="${escapeAttr(reason)}" ${state.reviewDraft.revision_reasons.includes(reason) ? "checked" : ""}>
                                     <span>${escapeHtml(reason)}</span>
@@ -969,7 +1072,7 @@ async function exportQuestions(format) {
         const disposition = response.headers.get("content-disposition") || "";
         const match = disposition.match(/filename="?([^"]+)"?/);
         link.href = url;
-        link.download = match?.[1] || `cgt_bench_export.${format}`;
+        link.download = match?.[1] || `${state.user.track || "benchmark"}_bench_export.${format}`;
         document.body.appendChild(link);
         link.click();
         link.remove();

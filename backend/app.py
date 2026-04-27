@@ -1,4 +1,4 @@
-"""CGT Agent benchmark 后端 — Flask + SQLite."""
+"""Unified benchmark backend for CGT and Protein tracks."""
 import argparse
 import json
 import os
@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
-from db import IS_POSTGRES, init_db, get_db, row_to_dict
+from bench_config import DEFAULT_TRACK, PRESET_REVISION_REASONS, SOURCE_TYPES, TRACKS, get_track_config
+from db import IS_POSTGRES, TABLE_NAME, init_db, get_db, row_to_dict
 from validators import (
     validate_question_payload,
     validate_review_payload,
-    PRESET_REVISION_REASONS,
 )
 from export_utils import to_xlsx_bytes, to_json_bytes, to_markdown_bytes
 
@@ -23,7 +23,7 @@ STATIC_DIR = os.path.normpath(STATIC_DIR)
 app = Flask(__name__, static_folder=None)
 CORS(app)
 init_db()
-print(f"Database backend: {'Postgres' if IS_POSTGRES else 'SQLite'}", flush=True)
+print(f"Database backend: {'Postgres' if IS_POSTGRES else 'SQLite'}; table: {TABLE_NAME}", flush=True)
 
 
 def now_iso() -> str:
@@ -38,6 +38,15 @@ def current_role() -> str:
 def current_name() -> str:
     raw = (request.headers.get("X-User-Name") or "").strip()
     return unquote(raw)
+
+
+def current_track() -> str:
+    track = (
+        (request.headers.get("X-Track") or "").strip().lower()
+        or (request.args.get("track") or "").strip().lower()
+        or DEFAULT_TRACK
+    )
+    return track if track in TRACKS else DEFAULT_TRACK
 
 
 def api_error(message: str, status: int = 400, errors=None):
@@ -66,16 +75,27 @@ def static_proxy(path):
 
 @app.get("/api/meta")
 def meta():
+    track = current_track()
+    config = get_track_config(track)
     return jsonify({
-        "difficulties": ["L1", "L2", "L3", "L4"],
-        "domains": [
-            "递送系统 C1",
-            "基因治疗 C2",
-            "细胞工程 C3",
+        "tracks": [
+            {
+                "value": item["value"],
+                "label": item["label"],
+                "emoji": item["emoji"],
+            }
+            for item in TRACKS.values()
         ],
-        "source_types": ["原创", "文献改编", "教材改编", "数据库条目改编"],
+        "current_track": track,
+        "site_title": config["site_title"],
+        "site_subtitle": config["site_subtitle"],
+        "footer_text": config["footer_text"],
+        "difficulties": config["difficulties"],
+        "domains": config["domains"],
+        "placeholders": config["placeholders"],
+        "source_types": SOURCE_TYPES,
         "revision_reasons": PRESET_REVISION_REASONS,
-        "target_count": 1000,
+        "target_count": config["target_count"],
     })
 
 
@@ -83,9 +103,11 @@ def meta():
 
 @app.get("/api/stats")
 def stats():
+    track = current_track()
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT status, COUNT(*) AS n FROM questions GROUP BY status"
+            f"SELECT status, COUNT(*) AS n FROM {TABLE_NAME} WHERE track = ? GROUP BY status",
+            (track,),
         ).fetchall()
     counts = {"pending": 0, "approved": 0, "needs_revision": 0}
     for r in rows:
@@ -96,15 +118,15 @@ def stats():
         "approved": counts["approved"],
         "pending": counts["pending"],
         "needs_revision": counts["needs_revision"],
-        "target": 1000,
+        "target": get_track_config(track)["target_count"],
     })
 
 
 # ------- 列表 -------
 
-def _build_where(args, role: str, name: str):
-    clauses = []
-    params = []
+def _build_where(args, role: str, name: str, track: str):
+    clauses = ["track = ?"]
+    params = [track]
 
     status = args.get("status")
     if status:
@@ -154,7 +176,8 @@ def _build_where(args, role: str, name: str):
 def list_questions():
     role = current_role()
     name = current_name()
-    where_sql, params = _build_where(request.args, role, name)
+    track = current_track()
+    where_sql, params = _build_where(request.args, role, name, track)
 
     sort = request.args.get("sort", "-submitted_at")
     sort_map = {
@@ -171,7 +194,7 @@ def list_questions():
 
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT * FROM questions{where_sql}{order_sql} LIMIT ?",
+            f"SELECT * FROM {TABLE_NAME}{where_sql}{order_sql} LIMIT ?",
             params + [limit],
         ).fetchall()
 
@@ -190,8 +213,12 @@ def list_questions():
 def get_question(qid):
     role = current_role()
     name = current_name()
+    track = current_track()
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
     if not row:
         return api_error("题目不存在", 404)
     item = row_to_dict(row)
@@ -210,19 +237,21 @@ def get_question(qid):
 @app.post("/api/questions")
 def create_question():
     data = request.get_json(force=True, silent=True) or {}
-    errors = validate_question_payload(data)
+    track = current_track()
+    errors = validate_question_payload(data, track)
     if errors:
         return api_error("字段校验失败", 400, errors)
 
     now = now_iso()
-    insert_sql = """
-        INSERT INTO questions (
+    insert_sql = f"""
+        INSERT INTO {TABLE_NAME} (
+            track,
             title, difficulty, domain, subdomain, content,
             rubric_json, reference_answer,
             source_type, source_detail,
             author_name, author_institution, author_email,
             status, submitted_at, updated_at
-        ) VALUES (?,?,?,?,?, ?,?, ?,?, ?,?,?, 'pending', ?, ?)
+        ) VALUES (?,?,?,?,?,?, ?,?, ?,?, ?,?,?, 'pending', ?, ?)
     """
     if IS_POSTGRES:
         insert_sql += " RETURNING id"
@@ -231,6 +260,7 @@ def create_question():
         cursor = conn.execute(
             insert_sql,
             (
+                track,
                 data["title"].strip(),
                 data["difficulty"],
                 data["domain"],
@@ -251,7 +281,10 @@ def create_question():
             new_id = cursor.fetchone()["id"]
         else:
             new_id = cursor.lastrowid
-        row = conn.execute("SELECT * FROM questions WHERE id = ?", (new_id,)).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (new_id, track),
+        ).fetchone()
     return jsonify(row_to_dict(row)), 201
 
 
@@ -260,10 +293,14 @@ def create_question():
 @app.put("/api/questions/<int:qid>")
 def update_question(qid):
     name = current_name()
+    track = current_track()
     data = request.get_json(force=True, silent=True) or {}
 
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
         if not row:
             return api_error("题目不存在", 404)
         if row["author_name"] != name:
@@ -274,7 +311,7 @@ def update_question(qid):
         # 保留作者信息
         data.setdefault("author_name", row["author_name"])
 
-        errors = validate_question_payload(data, is_update=True)
+        errors = validate_question_payload(data, track, is_update=True)
         if errors:
             return api_error("字段校验失败", 400, errors)
 
@@ -282,13 +319,13 @@ def update_question(qid):
         new_status = "pending" if row["status"] == "needs_revision" else row["status"]
 
         conn.execute(
-            """
-            UPDATE questions SET
+            f"""
+            UPDATE {TABLE_NAME} SET
                 title = ?, difficulty = ?, domain = ?, subdomain = ?, content = ?,
                 rubric_json = ?, reference_answer = ?,
                 source_type = ?, source_detail = ?,
                 status = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND track = ?
             """,
             (
                 data["title"].strip(),
@@ -303,9 +340,13 @@ def update_question(qid):
                 new_status,
                 now_iso(),
                 qid,
+                track,
             ),
         )
-        updated = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        updated = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
     return jsonify(row_to_dict(updated))
 
 
@@ -314,15 +355,22 @@ def update_question(qid):
 @app.delete("/api/questions/<int:qid>")
 def withdraw_question(qid):
     name = current_name()
+    track = current_track()
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
         if not row:
             return api_error("题目不存在", 404)
         if row["author_name"] != name:
             return api_error("仅出题人可撤回", 403)
         if row["status"] != "pending":
             return api_error("仅待审核题目可撤回", 409)
-        conn.execute("DELETE FROM questions WHERE id = ?", (qid,))
+        conn.execute(
+            f"DELETE FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        )
     return ("", 204)
 
 
@@ -332,22 +380,26 @@ def withdraw_question(qid):
 def review_question(qid):
     if current_role() != "reviewer":
         return api_error("仅审核员可审核", 403)
+    track = current_track()
     data = request.get_json(force=True, silent=True) or {}
     errors = validate_review_payload(data)
     if errors:
         return api_error("审核字段校验失败", 400, errors)
 
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
         if not row:
             return api_error("题目不存在", 404)
         conn.execute(
-            """
-            UPDATE questions SET
+            f"""
+            UPDATE {TABLE_NAME} SET
                 status = ?, reviewed_at = ?, updated_at = ?,
                 reviewer_name = ?, reviewer_institution = ?,
                 review_comment = ?, revision_reasons_json = ?
-            WHERE id = ?
+            WHERE id = ? AND track = ?
             """,
             (
                 data["status"],
@@ -358,9 +410,13 @@ def review_question(qid):
                 (data.get("review_comment") or "").strip() or None,
                 json.dumps(data.get("revision_reasons") or [], ensure_ascii=False),
                 qid,
+                track,
             ),
         )
-        updated = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+        updated = conn.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE id = ? AND track = ?",
+            (qid, track),
+        ).fetchone()
     return jsonify(row_to_dict(updated))
 
 
@@ -369,6 +425,7 @@ def review_question(qid):
 @app.get("/api/questions/export")
 def export_questions():
     role = current_role()
+    track = current_track()
     fmt = (request.args.get("format") or "xlsx").lower()
     if fmt not in ("xlsx", "json", "md"):
         return api_error("不支持的格式,仅支持 xlsx/json/md", 400)
@@ -377,16 +434,17 @@ def export_questions():
     args = request.args.to_dict()
     args["status"] = "approved"
     name = current_name()
-    where_sql, params = _build_where(args, role, name)
+    where_sql, params = _build_where(args, role, name, track)
 
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT * FROM questions{where_sql} ORDER BY reviewed_at DESC LIMIT 5000",
+            f"SELECT * FROM {TABLE_NAME}{where_sql} ORDER BY reviewed_at DESC LIMIT 5000",
             params,
         ).fetchall()
 
     items = [row_to_dict(r) for r in rows]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    prefix = f"{track}_bench_{ts}"
 
     if fmt == "xlsx":
         data = to_xlsx_bytes(items, role)
@@ -394,7 +452,7 @@ def export_questions():
             _bytes_to_io(data),
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             as_attachment=True,
-            download_name=f"cgt_bench_{ts}.xlsx",
+            download_name=f"{prefix}.xlsx",
         )
     if fmt == "json":
         data = to_json_bytes(items, role)
@@ -402,14 +460,14 @@ def export_questions():
             _bytes_to_io(data),
             mimetype="application/json",
             as_attachment=True,
-            download_name=f"cgt_bench_{ts}.json",
+            download_name=f"{prefix}.json",
         )
     data = to_markdown_bytes(items, role)
     return send_file(
         _bytes_to_io(data),
         mimetype="text/markdown",
         as_attachment=True,
-        download_name=f"cgt_bench_{ts}.md",
+        download_name=f"{prefix}.md",
     )
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ProteinDesign Bench 启动脚本
+# Benchmark Hub 启动脚本
 # 用法: bash start.sh [port]
 set -euo pipefail
 
@@ -21,5 +21,5 @@ fi
     "$PYTHON_BIN" -m pip install -r requirements.txt
 }
 
-echo "启动 ProteinDesign Bench 平台 http://localhost:${PORT}"
+echo "启动 Benchmark Hub 平台 http://localhost:${PORT}"
 exec "$PYTHON_BIN" app.py --port "$PORT"

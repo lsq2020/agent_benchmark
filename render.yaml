@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: cgt-bench
+    name: benchmark-hub
     env: python
     plan: starter
     buildCommand: pip install -r backend/requirements.txt
@@ -10,10 +10,12 @@ services:
         value: 3.12.4
       - key: DATABASE_URL
         fromDatabase:
-          name: cgt-bench-db
+          name: benchmark-hub-db
           property: connectionString
+      - key: TABLE_NAME
+        value: benchmark_questions
 
 databases:
-  - name: cgt-bench-db
-    databaseName: cgt_bench
-    user: cgt_bench
+  - name: benchmark-hub-db
+    databaseName: benchmark_hub
+    user: benchmark_hub

@@ -1,0 +1,5 @@
+backend/__pycache__/
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+*.pyc

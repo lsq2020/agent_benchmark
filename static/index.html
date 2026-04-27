@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CGT Agent benchmark | 基因与细胞治疗AI Agent评测题库</title>
+    <title>Benchmark Hub</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/css/styles.css">
     <script>
@@ -30,10 +30,13 @@
 <header class="bg-gradient-to-r from-primary to-indigo-700 text-white shadow-md sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
         <div class="flex items-center gap-3">
-            <span class="text-3xl">🧫</span>
+            <span class="text-3xl" id="site-icon">🧫</span>
             <div>
-                <h1 class="text-xl font-bold leading-tight">CGT Agent benchmark</h1>
-                <p class="text-xs opacity-80">基因与细胞治疗AI Agent评测基准 · 题目收集与管理平台</p>
+                <div class="flex flex-wrap items-center gap-3">
+                    <h1 class="text-xl font-bold leading-tight" id="site-title">Benchmark Hub</h1>
+                    <div id="track-switcher" class="flex flex-wrap gap-2"></div>
+                </div>
+                <p class="text-xs opacity-80" id="site-subtitle">统一 benchmark 题目收集与管理平台</p>
             </div>
         </div>
 
@@ -103,8 +106,8 @@
 
 <!-- 页脚 -->
 <footer class="mt-12 py-6 border-t border-slate-200 bg-white">
-    <div class="max-w-7xl mx-auto px-6 text-center text-xs text-slate-500">
-        🧫 CGT Agent benchmark · 基因与细胞治疗AI Agent评测基准 · v1.0 原型
+    <div class="max-w-7xl mx-auto px-6 text-center text-xs text-slate-500" id="site-footer">
+        Benchmark Hub · v2.0
     </div>
 </footer>
 

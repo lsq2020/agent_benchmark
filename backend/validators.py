@@ -1,34 +1,20 @@
 """字段校验逻辑."""
 
-DIFFICULTIES = {"L1", "L2", "L3", "L4"}
-
-DOMAINS = {
-    "递送系统 C1",
-    "基因治疗 C2",
-    "细胞工程 C3",
-}
-
-SOURCE_TYPES = {"原创", "文献改编", "教材改编", "数据库条目改编"}
+from bench_config import PRESET_REVISION_REASONS, SOURCE_TYPES, get_track_config
 
 STATUSES = {"pending", "approved", "needs_revision"}
-
-PRESET_REVISION_REASONS = [
-    "题目描述不清晰",
-    "采分点设置违规",
-    "参考答案错误/不完整",
-    "溯源信息缺失",
-    "领域不符",
-    "其他",
-]
-
 
 def _err(field, message):
     return {"field": field, "message": message}
 
 
-def validate_question_payload(data: dict, is_update: bool = False) -> list:
+def validate_question_payload(data: dict, track: str, is_update: bool = False) -> list:
     """返回错误列表,空列表代表校验通过."""
     errors = []
+    track_config = get_track_config(track)
+    difficulties = {item["value"] for item in track_config["difficulties"]}
+    domains = set(track_config["domains"])
+    source_types = set(SOURCE_TYPES)
 
     title = (data.get("title") or "").strip()
     if not title:
@@ -37,11 +23,11 @@ def validate_question_payload(data: dict, is_update: bool = False) -> list:
         errors.append(_err("title", "题目标题不得超过 500 字"))
 
     difficulty = data.get("difficulty")
-    if difficulty not in DIFFICULTIES:
-        errors.append(_err("difficulty", f"难度等级必须为 {sorted(DIFFICULTIES)} 之一"))
+    if difficulty not in difficulties:
+        errors.append(_err("difficulty", f"难度等级必须为 {sorted(difficulties)} 之一"))
 
     domain = data.get("domain")
-    if domain not in DOMAINS:
+    if domain not in domains:
         errors.append(_err("domain", "领域大类不合法"))
 
     content = (data.get("content") or "").strip()
@@ -74,7 +60,7 @@ def validate_question_payload(data: dict, is_update: bool = False) -> list:
         errors.append(_err("reference_answer", "L1/L2 难度题目参考答案必填"))
 
     source_type = data.get("source_type")
-    if source_type not in SOURCE_TYPES:
+    if source_type not in source_types:
         errors.append(_err("source_type", "题目来源不合法"))
     if source_type and source_type != "原创":
         if not (data.get("source_detail") or "").strip():

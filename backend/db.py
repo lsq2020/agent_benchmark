@@ -1,20 +1,27 @@
 """Database helpers for local SQLite and Render Postgres."""
 import json
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 
 
+DEFAULT_TABLE_NAME = "benchmark_questions"
+TABLE_NAME = os.environ.get("TABLE_NAME", DEFAULT_TABLE_NAME).strip() or DEFAULT_TABLE_NAME
+if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", TABLE_NAME):
+    raise ValueError("TABLE_NAME must contain only letters, numbers, and underscores, and not start with a number")
+
 SQLITE_DB_PATH = os.environ.get(
     "DB_PATH",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "cgt_bench.db"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark_bench.db"),
 )
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 IS_POSTGRES = bool(DATABASE_URL)
 
-SQLITE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS questions (
+SQLITE_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    track                 TEXT    NOT NULL,
     title                 TEXT    NOT NULL,
     difficulty            TEXT    NOT NULL,
     domain                TEXT    NOT NULL,
@@ -37,15 +44,17 @@ CREATE TABLE IF NOT EXISTS questions (
     revision_reasons_json TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_status     ON questions(status);
-CREATE INDEX IF NOT EXISTS idx_domain     ON questions(domain);
-CREATE INDEX IF NOT EXISTS idx_difficulty ON questions(difficulty);
-CREATE INDEX IF NOT EXISTS idx_author     ON questions(author_name);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_status     ON {TABLE_NAME}(status);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_track      ON {TABLE_NAME}(track);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_domain     ON {TABLE_NAME}(domain);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_difficulty ON {TABLE_NAME}(difficulty);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_author     ON {TABLE_NAME}(author_name);
 """
 
-POSTGRES_SCHEMA = """
-CREATE TABLE IF NOT EXISTS questions (
+POSTGRES_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     id                    BIGSERIAL PRIMARY KEY,
+    track                 TEXT    NOT NULL,
     title                 TEXT    NOT NULL,
     difficulty            TEXT    NOT NULL,
     domain                TEXT    NOT NULL,
@@ -68,10 +77,11 @@ CREATE TABLE IF NOT EXISTS questions (
     revision_reasons_json TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_status     ON questions(status);
-CREATE INDEX IF NOT EXISTS idx_domain     ON questions(domain);
-CREATE INDEX IF NOT EXISTS idx_difficulty ON questions(difficulty);
-CREATE INDEX IF NOT EXISTS idx_author     ON questions(author_name);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_status     ON {TABLE_NAME}(status);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_track      ON {TABLE_NAME}(track);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_domain     ON {TABLE_NAME}(domain);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_difficulty ON {TABLE_NAME}(difficulty);
+CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_author     ON {TABLE_NAME}(author_name);
 """
 
 
